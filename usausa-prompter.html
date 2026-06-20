@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>うさうさプロンプター🐰｜配信台本読み上げサポート</title>
+<style>
+  :root{
+    --ink:#14101a;          /* 表示画面の背景（夜のうさぎ色） */
+    --ink-soft:#1e1824;     /* パネル背景 */
+    --ink-line:#2c2436;     /* 仕切り線 */
+    --paper:#fef6f9;        /* 表示文字（温白） */
+    --paper-dim:#cdbcd0;    /* サブ文字 */
+    --rose:#ff6b9d;         /* うさぎローズ（主アクセント） */
+    --rose-deep:#e24f84;
+    --mint:#6be0c4;         /* 補助アクセント */
+    --warn:#ffd166;
+    --shadow:0 10px 30px rgba(0,0,0,.35);
+    --font:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;}
+  body{
+    font-family:var(--font);
+    background:var(--ink);
+    color:var(--paper);
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  button{font-family:inherit;cursor:pointer;border:none;color:inherit;}
+  button:focus-visible, input:focus-visible, label:focus-visible{
+    outline:3px solid var(--mint); outline-offset:2px; border-radius:8px;
+  }
+
+  /* ===== レイアウト ===== */
+  .app{display:flex;flex-direction:column;height:100dvh;}
+
+  /* ---- 上部バー ---- */
+  .topbar{
+    display:flex;align-items:center;gap:12px;
+    padding:10px 16px;
+    background:var(--ink-soft);
+    border-bottom:1px solid var(--ink-line);
+    flex-wrap:wrap;
+  }
+  .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:.02em;white-space:nowrap;}
+  .brand .ears{font-size:1.35rem;line-height:1;}
+  .brand small{display:block;font-size:.62rem;font-weight:600;color:var(--rose);letter-spacing:.14em;margin-top:1px;}
+  .topbar .spacer{flex:1;}
+  .ghost{
+    background:transparent;border:1px solid var(--ink-line);
+    color:var(--paper-dim);padding:7px 13px;border-radius:9px;font-size:.82rem;font-weight:700;
+  }
+  .ghost:hover{border-color:var(--rose);color:var(--paper);}
+
+  /* ---- ステージ（プロンプター表示部） ---- */
+  .stage{
+    position:relative;flex:1;overflow:hidden;
+    background:radial-gradient(120% 80% at 50% 0%, #1b1424 0%, var(--ink) 70%);
+  }
+  .scroller{
+    position:absolute;inset:0;
+    will-change:transform;
+  }
+  .script{
+    color:var(--paper);
+    font-weight:700;
+    line-height:1.85;
+    word-break:break-word;
+  }
+  .script h1,.script h2,.script h3{color:var(--rose);font-weight:800;line-height:1.4;}
+  .script h1{font-size:1.25em;}
+  .script h2{font-size:1.12em;}
+  .script h3{font-size:1.02em;color:var(--mint);}
+  .script strong{color:var(--warn);font-weight:800;}
+  .script .pause{color:var(--paper-dim);font-weight:600;}
+  .script p{margin:.15em 0;}
+  .script .blank{height:.9em;}
+
+  /* 縦モード：横書き・下→上 */
+  .stage.v .scroller{padding:0 7vw;}
+  .stage.v .script{position:static;text-align:center;}
+
+  /* 横モード：縦書き・右→左（台本風） */
+  .stage.h .script{
+    position:absolute;top:0;right:0;height:100%;width:max-content;
+    writing-mode:vertical-rl;
+    padding:6vh 0;text-align:start;line-height:2.0;
+  }
+
+  /* ミラー反転（プロンプターガラス用） */
+  .stage.mirror .scroller{transform-origin:center;}
+
+  /* 読む位置ガイド */
+  .guide{position:absolute;pointer-events:none;z-index:3;}
+  .stage.v .guide{
+    left:0;right:0;top:38%;height:0;
+    border-top:2px dashed rgba(255,107,157,.45);
+  }
+  .stage.v .guide::before,.stage.v .guide::after{
+    content:"";position:absolute;top:-7px;
+    width:0;height:0;border:8px solid transparent;
+  }
+  .stage.v .guide::before{left:10px;border-left-color:var(--rose);}
+  .stage.v .guide::after{right:10px;border-right-color:var(--rose);}
+  .stage.h .guide{
+    top:0;bottom:0;right:38%;width:0;
+    border-right:2px dashed rgba(255,107,157,.45);
+  }
+  .stage.h .guide::before,.stage.h .guide::after{
+    content:"";position:absolute;right:-7px;
+    width:0;height:0;border:8px solid transparent;
+  }
+  .stage.h .guide::before{top:10px;border-top-color:var(--rose);}
+  .stage.h .guide::after{bottom:10px;border-bottom-color:var(--rose);}
+
+  /* ステージ端のフェード */
+  .fade{position:absolute;z-index:2;pointer-events:none;}
+  .stage.v .fade.a{top:0;left:0;right:0;height:18%;background:linear-gradient(var(--ink),transparent);}
+  .stage.v .fade.b{bottom:0;left:0;right:0;height:18%;background:linear-gradient(transparent,var(--ink));}
+  .stage.h .fade.a{top:0;bottom:0;right:0;width:14%;background:linear-gradient(to left,var(--ink),transparent);}
+  .stage.h .fade.b{top:0;bottom:0;left:0;width:14%;background:linear-gradient(to right,var(--ink),transparent);}
+
+  /* スタート前/読了後オーバーレイ */
+  .overlay{
+    position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:14px;text-align:center;padding:24px;
+    background:rgba(20,16,26,.78);backdrop-filter:blur(2px);
+  }
+  .overlay h2{font-size:1.3rem;color:var(--rose);}
+  .overlay p{color:var(--paper-dim);font-size:.92rem;max-width:30ch;line-height:1.7;}
+  .overlay.hidden{display:none;}
+  .big-play{
+    margin-top:6px;background:var(--rose);color:#2a0d1a;font-weight:900;
+    font-size:1.05rem;padding:14px 30px;border-radius:999px;box-shadow:var(--shadow);
+  }
+  .big-play:hover{background:var(--rose-deep);color:#fff;}
+
+  .rabbit-run{font-size:2rem;animation:hop 1.1s ease-in-out infinite;}
+  @keyframes hop{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+
+  /* ---- 進捗バー ---- */
+  .progress-wrap{
+    display:flex;align-items:center;gap:12px;
+    padding:7px 16px;background:var(--ink-soft);border-top:1px solid var(--ink-line);
+    font-variant-numeric:tabular-nums;font-size:.78rem;color:var(--paper-dim);
+  }
+  .progress{
+    position:relative;flex:1;height:8px;border-radius:99px;background:var(--ink-line);cursor:pointer;
+  }
+  .progress .bar{position:absolute;inset:0;width:0;border-radius:99px;background:linear-gradient(90deg,var(--rose),var(--mint));}
+  .progress .knob{
+    position:absolute;top:50%;left:0;transform:translate(-50%,-50%);
+    font-size:1rem;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5));
+  }
+  .time{white-space:nowrap;}
+  .time b{color:var(--paper);font-weight:800;}
+
+  /* ---- コントロールバー ---- */
+  .controls{
+    display:flex;align-items:center;gap:8px;justify-content:center;flex-wrap:wrap;
+    padding:11px 16px calc(11px + env(safe-area-inset-bottom));
+    background:var(--ink-soft);border-top:1px solid var(--ink-line);
+  }
+  .ctl{
+    background:var(--ink);border:1px solid var(--ink-line);border-radius:11px;
+    width:48px;height:48px;font-size:1.15rem;display:grid;place-items:center;color:var(--paper);
+  }
+  .ctl:hover{border-color:var(--rose);}
+  .ctl.play{
+    width:64px;height:56px;background:var(--rose);color:#2a0d1a;font-size:1.5rem;border:none;
+    box-shadow:0 6px 16px rgba(255,107,157,.35);
+  }
+  .ctl.play:hover{background:var(--rose-deep);color:#fff;}
+  .ctl.play.on{background:var(--warn);color:#3a2a00;box-shadow:0 6px 16px rgba(255,209,102,.35);}
+  .stepper{
+    display:flex;align-items:center;gap:6px;background:var(--ink);border:1px solid var(--ink-line);
+    border-radius:11px;padding:5px 8px;
+  }
+  .stepper .lbl{font-size:.62rem;color:var(--paper-dim);font-weight:700;letter-spacing:.05em;min-width:44px;text-align:center;}
+  .stepper .val{font-size:.84rem;font-weight:800;min-width:42px;text-align:center;font-variant-numeric:tabular-nums;}
+  .stepper button{width:30px;height:30px;border-radius:8px;background:var(--ink-soft);border:1px solid var(--ink-line);font-size:1.05rem;color:var(--paper);}
+  .stepper button:hover{border-color:var(--mint);}
+
+  /* ---- 設定ドロワー ---- */
+  .drawer{
+    position:fixed;inset:0;z-index:20;display:flex;justify-content:flex-end;
+    background:rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:opacity .2s;
+  }
+  .drawer.open{opacity:1;pointer-events:auto;}
+  .panel{
+    width:min(420px,92vw);height:100%;background:var(--ink-soft);
+    border-left:1px solid var(--ink-line);box-shadow:var(--shadow);
+    transform:translateX(100%);transition:transform .25s ease;
+    display:flex;flex-direction:column;
+  }
+  .drawer.open .panel{transform:none;}
+  .panel-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--ink-line);}
+  .panel-head h2{font-size:1rem;color:var(--rose);}
+  .panel-body{padding:18px;overflow:auto;flex:1;display:flex;flex-direction:column;gap:20px;}
+  .field label.h{display:block;font-size:.78rem;font-weight:800;color:var(--paper);margin-bottom:7px;letter-spacing:.02em;}
+  .field .hint{font-size:.7rem;color:var(--paper-dim);margin-top:5px;line-height:1.5;}
+  textarea{
+    width:100%;min-height:190px;resize:vertical;background:var(--ink);color:var(--paper);
+    border:1px solid var(--ink-line);border-radius:10px;padding:12px;font-family:var(--font);
+    font-size:.9rem;line-height:1.6;
+  }
+  textarea:focus{outline:none;border-color:var(--rose);}
+  .file-row{display:flex;gap:8px;margin-top:9px;flex-wrap:wrap;}
+  .file-btn{
+    background:var(--ink);border:1px dashed var(--rose);color:var(--paper);
+    padding:9px 14px;border-radius:10px;font-size:.82rem;font-weight:700;
+  }
+  .file-btn:hover{background:rgba(255,107,157,.08);}
+  .seg{display:flex;background:var(--ink);border:1px solid var(--ink-line);border-radius:10px;padding:4px;gap:4px;}
+  .seg button{flex:1;padding:9px 6px;border-radius:7px;font-size:.82rem;font-weight:800;color:var(--paper-dim);background:transparent;}
+  .seg button.active{background:var(--rose);color:#2a0d1a;}
+  .toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+  .toggle-row .desc{font-size:.7rem;color:var(--paper-dim);margin-top:3px;}
+  .switch{position:relative;width:52px;height:30px;flex:none;}
+  .switch input{opacity:0;width:0;height:0;}
+  .slider{position:absolute;inset:0;background:var(--ink-line);border-radius:99px;transition:.2s;}
+  .slider::before{content:"";position:absolute;width:22px;height:22px;left:4px;top:4px;background:var(--paper-dim);border-radius:50%;transition:.2s;}
+  .switch input:checked + .slider{background:var(--rose);}
+  .switch input:checked + .slider::before{transform:translateX(22px);background:#fff;}
+  .stat-box{display:flex;gap:10px;flex-wrap:wrap;}
+  .stat{flex:1;min-width:90px;background:var(--ink);border:1px solid var(--ink-line);border-radius:10px;padding:11px 12px;}
+  .stat .n{font-size:1.2rem;font-weight:900;color:var(--mint);font-variant-numeric:tabular-nums;}
+  .stat .k{font-size:.66rem;color:var(--paper-dim);margin-top:2px;font-weight:700;}
+  .panel-foot{padding:14px 18px;border-top:1px solid var(--ink-line);}
+  .apply{width:100%;background:var(--rose);color:#2a0d1a;font-weight:900;padding:13px;border-radius:11px;font-size:.95rem;}
+  .apply:hover{background:var(--rose-deep);color:#fff;}
+
+  .help{font-size:.7rem;color:var(--paper-dim);line-height:1.7;}
+  .help kbd{background:var(--ink);border:1px solid var(--ink-line);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-family:var(--font);font-size:.7rem;color:var(--paper);}
+
+  @media (max-width:560px){
+    .brand small{display:none;}
+    .stepper .lbl{display:none;}
+    .ctl{width:44px;height:44px;}
+    .ctl.play{width:58px;height:50px;}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .rabbit-run{animation:none;}
+    .panel,.slider,.slider::before{transition:none;}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- 上部バー -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="ears">🐰</span>
+      <div>うさうさプロンプター<small>USAUSA TELEPROMPTER</small></div>
+    </div>
+    <div class="spacer"></div>
+    <button class="ghost" id="btnMirror" title="左右反転（プロンプターガラス越し用）">🪞 ミラー</button>
+    <button class="ghost" id="btnOpen">📝 原稿・設定</button>
+  </header>
+
+  <!-- 表示ステージ -->
+  <main class="stage v" id="stage">
+    <div class="scroller" id="scroller">
+      <div class="script" id="script"></div>
+    </div>
+    <div class="fade a"></div>
+    <div class="fade b"></div>
+    <div class="guide"></div>
+    <div class="overlay" id="overlay">
+      <div class="rabbit-run">🐰</div>
+      <h2 id="ovTitle">原稿を入れて、はじめましょう</h2>
+      <p id="ovText">右上の「📝 原稿・設定」から台本を貼り付けるか、メモ（.md / .txt）を読み込んでください。</p>
+      <button class="big-play" id="ovPlay">▶ スタート</button>
+    </div>
+  </main>
+
+  <!-- 進捗 -->
+  <div class="progress-wrap">
+    <div class="progress" id="progress" title="ドラッグで好きな位置へ">
+      <div class="bar" id="bar"></div>
+      <div class="knob" id="knob">🐰</div>
+    </div>
+    <div class="time"><b id="tCur">0:00</b> / <span id="tTotal">0:00</span></div>
+  </div>
+
+  <!-- コントロール -->
+  <div class="controls">
+    <button class="ctl" id="btnBack" title="少し戻る（←）">⏪</button>
+    <button class="ctl play" id="btnPlay" title="再生 / 一時停止（Space）">▶</button>
+    <button class="ctl" id="btnFwd" title="少し進む（→）">⏩</button>
+    <button class="ctl" id="btnReset" title="先頭に戻す（R）">↺</button>
+
+    <div class="stepper">
+      <span class="lbl">速度<br>字/分</span>
+      <button id="cpmDown" aria-label="速度を下げる">−</button>
+      <span class="val" id="cpmVal">300</span>
+      <button id="cpmUp" aria-label="速度を上げる">＋</button>
+    </div>
+    <div class="stepper">
+      <span class="lbl">文字<br>サイズ</span>
+      <button id="sizeDown" aria-label="文字を小さく">−</button>
+      <span class="val" id="sizeVal">48</span>
+      <button id="sizeUp" aria-label="文字を大きく">＋</button>
+    </div>
+  </div>
+</div>
+
+<!-- 設定ドロワー -->
+<div class="drawer" id="drawer">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>📝 原稿・設定</h2>
+      <button class="ghost" id="btnClose">閉じる ✕</button>
+    </div>
+    <div class="panel-body">
+
+      <div class="field">
+        <label class="h" for="ta">台本テキスト</label>
+        <textarea id="ta" placeholder="ここに台本を貼り付け、または下のボタンでファイルを読み込み。&#10;&#10;# 見出しは大きなローズ色になります&#10;**ここは強調**（黄色になります）&#10;（間）などのト書きはそのまま読まれます"></textarea>
+        <div class="file-row">
+          <button class="file-btn" id="btnFile">📂 メモを読み込む（.md / .txt）</button>
+          <input type="file" id="file" accept=".md,.markdown,.txt,.text,text/plain,text/markdown" hidden>
+          <button class="file-btn" id="btnSample">🐰 サンプル台本</button>
+        </div>
+        <p class="hint">マークダウンの見出し（#）と強調（**）に対応。空行は「間（ま）」として残ります。</p>
+      </div>
+
+      <div class="field">
+        <label class="h">流れる向き</label>
+        <div class="seg" id="segDir">
+          <button data-dir="v" class="active">縦書き⤴ 下から上</button>
+          <button data-dir="h">台本風→ 右から左</button>
+        </div>
+        <p class="hint">縦＝横書きを下から上へ（YouTube定番）。台本風＝縦書きを右から左へ流します。</p>
+      </div>
+
+      <div class="field">
+        <label class="h">読み上げ速度</label>
+        <div class="seg" id="segPace">
+          <button data-cpm="220">ゆっくり<br>220</button>
+          <button data-cpm="300" class="active">標準<br>300</button>
+          <button data-cpm="380">はやめ<br>380</button>
+        </div>
+        <p class="hint">1分あたりの文字数（CPM）。原稿の文字数から所要時間を計算し、ちょうど読み終わる速さで流します。アナウンス標準は1分300字前後です。</p>
+      </div>
+
+      <div class="field">
+        <div class="toggle-row">
+          <div>
+            <label class="h" for="swMirror" style="margin:0;">ミラー反転</label>
+            <div class="desc">プロンプター用ガラスに反射させる時にON</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="swMirror"><span class="slider"></span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="h">この原稿の目安</label>
+        <div class="stat-box">
+          <div class="stat"><div class="n" id="stChars">0</div><div class="k">文字数</div></div>
+          <div class="stat"><div class="n" id="stTime">0:00</div><div class="k">所要時間</div></div>
+          <div class="stat"><div class="n" id="stCpm">300</div><div class="k">字/分</div></div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="h">キーボード操作</label>
+        <p class="help">
+          <kbd>Space</kbd> 再生 / 一時停止　<kbd>←</kbd><kbd>→</kbd> 戻る / 進む<br>
+          <kbd>↑</kbd><kbd>↓</kbd> 速度の微調整　<kbd>R</kbd> 先頭へ　<kbd>M</kbd> ミラー
+        </p>
+      </div>
+
+    </div>
+    <div class="panel-foot">
+      <button class="apply" id="btnApply">この原稿で表示する ▶</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---- 要素参照 ----
+  const $ = (id)=>document.getElementById(id);
+  const stage=$("stage"), scroller=$("scroller"), scriptEl=$("script");
+  const overlay=$("overlay"), ovTitle=$("ovTitle"), ovText=$("ovText"), ovPlay=$("ovPlay");
+  const bar=$("bar"), knob=$("knob"), progress=$("progress"), tCur=$("tCur"), tTotal=$("tTotal");
+  const btnPlay=$("btnPlay"), btnBack=$("btnBack"), btnFwd=$("btnFwd"), btnReset=$("btnReset");
+  const cpmVal=$("cpmVal"), sizeVal=$("sizeVal");
+  const drawer=$("drawer"), ta=$("ta");
+
+  // ---- 状態 ----
+  const state = {
+    playing:false,
+    pos:0,            // スクロール位置(px)
+    max:1,            // スクロール可能距離(px)
+    cpm:300,          // 1分あたり文字数
+    size:48,          // フォントサイズ(px)
+    dir:"v",          // "v"=縦書き下→上 / "h"=台本風右→左
+    mirror:false,
+    chars:0,          // 読み上げ対象文字数
+    speed:0,          // px/秒
+    startOff:0,       // 開始オフセット(px)
+    ready:false
+  };
+
+  // ===== マークダウン簡易整形 =====
+  function esc(s){return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+  function inline(s){
+    s=esc(s);
+    s=s.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>");
+    s=s.replace(/(（[^（）]*）|\([^()]*\))/g,'<span class="pause">$1</span>'); // ト書き・間
+    return s;
+  }
+  function render(text){
+    const lines=text.replace(/\r\n?/g,"\n").split("\n");
+    let html="";
+    for(const raw of lines){
+      const line=raw.replace(/\s+$/,"");
+      if(line.trim()===""){ html+='<div class="blank"></div>'; continue; }
+      const h=line.match(/^(#{1,3})\s+(.*)$/);
+      if(h){ const lv=h[1].length; html+=`<h${lv}>${inline(h[2])}</h${lv}>`; }
+      else { html+=`<p>${inline(line)}</p>`; }
+    }
+    scriptEl.innerHTML=html;
+  }
+  // 読み上げ対象文字数（空白・記号類は除外して概算）
+  function countChars(text){
+    const t=text.replace(/[#*]/g,"").replace(/\s/g,"");
+    return [...t].length;
+  }
+
+  // ===== レイアウト計算 =====
+  function applyStageClass(){
+    stage.className="stage "+state.dir+(state.mirror?" mirror":"");
+  }
+  function applySize(){
+    scriptEl.style.fontSize = state.size+"px";
+  }
+  // 開始/終了でコンテンツが画面外から流れ込むよう、開始オフセットと総移動量を算出
+  function measure(){
+    const ratio = state.max>0 ? state.pos/state.max : 0; // 比率を保持して再計算
+    applySize();
+    applyStageClass();
+    scroller.style.transform="none"; // 実測のため一旦リセット
+    if(state.dir==="v"){
+      const stageH=stage.clientHeight;
+      const contentH=scriptEl.scrollHeight;
+      state.startOff = stageH*0.55;                       // 先頭は画面中央やや下から
+      state.max = Math.max(1, contentH + stageH*0.10);    // 末尾が上に消えるまで
+    }else{
+      const stageW=stage.clientWidth;
+      const contentW=scriptEl.scrollWidth;
+      state.startOff = stageW*0.55;                       // 先頭は画面右から
+      state.max = Math.max(1, contentW + stageW*0.10);    // 末尾が左に消えるまで
+    }
+    state.pos = ratio*state.max;
+    recalcSpeed();
+    applyTransform();
+    updateProgress();
+  }
+  // CPMと文字数から「総所要時間」を出し、総距離を割って px/秒 を求める
+  function recalcSpeed(){
+    const secs = state.chars>0 ? (state.chars/state.cpm)*60 : 1;
+    state.speed = state.max/Math.max(secs,1);
+    tTotal.textContent = fmt(secs);
+  }
+  function applyTransform(){
+    const m = state.mirror ? " scaleX(-1)" : "";
+    if(state.dir==="v"){
+      scroller.style.transform = `translateY(${state.startOff - state.pos}px)${m}`;
+    }else{
+      // 右から左：開始は右に逃がし、posが増えると左へ流れる
+      scroller.style.transform = `translateX(${state.startOff - state.pos}px)${m}`;
+    }
+  }
+
+  function fmt(sec){
+    sec=Math.max(0,Math.round(sec));
+    const m=Math.floor(sec/60), s=sec%60;
+    return m+":"+String(s).padStart(2,"0");
+  }
+  function updateProgress(){
+    const r = state.max>0 ? state.pos/state.max : 0;
+    bar.style.width=(r*100)+"%";
+    knob.style.left=(r*100)+"%";
+    const elapsed = state.speed>0 ? state.pos/state.speed : 0;
+    tCur.textContent=fmt(elapsed);
+  }
+
+  // ===== 再生ループ =====
+  let lastT=0, raf=0;
+  function loop(t){
+    if(!state.playing){return;}
+    if(!lastT) lastT=t;
+    const dt=(t-lastT)/1000; lastT=t;
+    state.pos += state.speed*dt;
+    if(state.pos>=state.max){ state.pos=state.max; pause(); showEnd(); }
+    applyTransform(); updateProgress();
+    if(state.playing) raf=requestAnimationFrame(loop);
+  }
+  function play(){
+    if(!state.ready) return;
+    if(state.pos>=state.max){ state.pos=0; }
+    hideOverlay();
+    state.playing=true; lastT=0;
+    btnPlay.textContent="⏸"; btnPlay.classList.add("on");
+    raf=requestAnimationFrame(loop);
+  }
+  function pause(){
+    state.playing=false; cancelAnimationFrame(raf);
+    btnPlay.textContent="▶"; btnPlay.classList.remove("on");
+  }
+  function toggle(){ state.playing?pause():play(); }
+
+  // 手動移動（戻る/進む）秒指定でジャンプ
+  function nudge(seconds){
+    state.pos += state.speed*seconds;
+    state.pos=Math.max(0,Math.min(state.max,state.pos));
+    applyTransform(); updateProgress();
+  }
+  function reset(){
+    pause(); state.pos=0; applyTransform(); updateProgress();
+    if(state.ready) showStart();
+  }
+
+  // ===== オーバーレイ =====
+  function showStart(){
+    overlay.classList.remove("hidden");
+    ovTitle.textContent="準備OK！はじめましょう";
+    ovText.textContent="▶ スタートで台本が流れ出します。再生中はSpaceで一時停止、矢印キーで前後に動かせます。";
+    ovPlay.textContent="▶ スタート";
+  }
+  function showEnd(){
+    overlay.classList.remove("hidden");
+    ovTitle.textContent="おつかれさまでした🐰";
+    ovText.textContent="最後まで流れました。もう一度読むなら下のボタンか ↺ でどうぞ。";
+    ovPlay.textContent="↺ もう一度";
+  }
+  function hideOverlay(){ overlay.classList.add("hidden"); }
+
+  // ===== 原稿適用 =====
+  function loadScript(text){
+    const trimmed=(text||"").trim();
+    if(!trimmed){
+      state.ready=false;
+      overlay.classList.remove("hidden");
+      ovTitle.textContent="原稿が空っぽです";
+      ovText.textContent="「📝 原稿・設定」から台本を入れてください。";
+      ovPlay.textContent="📝 原稿を入れる";
+      return;
+    }
+    render(trimmed);
+    state.chars=countChars(trimmed);
+    state.ready=true;
+    state.pos=0;
+    measure();
+    updateStats();
+    showStart();
+  }
+  function updateStats(){
+    $("stChars").textContent=state.chars.toLocaleString();
+    const secs=(state.chars/state.cpm)*60;
+    $("stTime").textContent=fmt(secs);
+    $("stCpm").textContent=state.cpm;
+  }
+
+  // ===== コントロール束ね =====
+  function setCpm(v){
+    state.cpm=Math.max(80,Math.min(900,v));
+    cpmVal.textContent=state.cpm;
+    document.querySelectorAll("#segPace button").forEach(b=>{
+      b.classList.toggle("active", Number(b.dataset.cpm)===state.cpm);
+    });
+    recalcSpeed(); updateProgress(); updateStats();
+  }
+  function setSize(v){
+    state.size=Math.max(20,Math.min(120,v));
+    sizeVal.textContent=state.size;
+    if(state.ready) measure();
+  }
+  function setDir(d){
+    state.dir=d;
+    document.querySelectorAll("#segDir button").forEach(b=>b.classList.toggle("active",b.dataset.dir===d));
+    if(state.ready) measure();
+  }
+  function setMirror(on){
+    state.mirror=on;
+    $("swMirror").checked=on;
+    applyStageClass();
+    if(state.ready){ applyTransform(); }
+  }
+
+  // ===== イベント =====
+  btnPlay.onclick=toggle;
+  ovPlay.onclick=()=>{ if(!state.ready){ openDrawer(); } else { play(); } };
+  btnBack.onclick=()=>nudge(-3);
+  btnFwd.onclick=()=>nudge(3);
+  btnReset.onclick=reset;
+
+  $("cpmDown").onclick=()=>setCpm(state.cpm-10);
+  $("cpmUp").onclick=()=>setCpm(state.cpm+10);
+  $("sizeDown").onclick=()=>setSize(state.size-4);
+  $("sizeUp").onclick=()=>setSize(state.size+4);
+
+  document.querySelectorAll("#segDir button").forEach(b=>b.onclick=()=>setDir(b.dataset.dir));
+  document.querySelectorAll("#segPace button").forEach(b=>b.onclick=()=>setCpm(Number(b.dataset.cpm)));
+  $("swMirror").onchange=e=>setMirror(e.target.checked);
+  $("btnMirror").onclick=()=>setMirror(!state.mirror);
+
+  // ドロワー
+  function openDrawer(){ drawer.classList.add("open"); pause(); }
+  function closeDrawer(){ drawer.classList.remove("open"); }
+  $("btnOpen").onclick=openDrawer;
+  $("btnClose").onclick=closeDrawer;
+  drawer.onclick=e=>{ if(e.target===drawer) closeDrawer(); };
+  $("btnApply").onclick=()=>{ loadScript(ta.value); closeDrawer(); };
+
+  // ファイル読み込み
+  $("btnFile").onclick=()=>$("file").click();
+  $("file").onchange=e=>{
+    const f=e.target.files[0]; if(!f) return;
+    const r=new FileReader();
+    r.onload=()=>{ ta.value=r.result; updateLivePreview(); };
+    r.onerror=()=>{ ovTitle.textContent="ファイルを読めませんでした"; };
+    r.readAsText(f,"utf-8");
+  };
+  // 入力中の文字数プレビュー
+  function updateLivePreview(){
+    const c=countChars(ta.value.trim());
+    $("stChars").textContent=c.toLocaleString();
+    $("stTime").textContent=fmt((c/state.cpm)*60);
+  }
+  ta.addEventListener("input",updateLivePreview);
+
+  // サンプル
+  $("btnSample").onclick=()=>{
+    ta.value =
+`# はじめての配信、いってみよう
+
+みなさん、こんにちは。うさうさ先生です。
+今日は、はじめての配信でも緊張しないコツを3つ、お話しします。
+
+（深呼吸）
+
+## その1 まず目線
+
+カメラのレンズを、お客さんの目だと思ってください。
+**レンズを見て話す**だけで、ぐっと伝わりやすくなります。
+
+## その2 ゆっくり話す
+
+緊張すると、つい早口になります。
+このプロンプターの速さに、声を合わせてみましょう。
+
+## その3 とちっても大丈夫
+
+少しくらい噛んでも、止まらず進めばOK。
+配信は、完璧さより「あなたらしさ」です。
+
+（間）
+
+それでは、よい配信を。うさうさ先生でした。またね！`;
+    updateLivePreview();
+  };
+
+  // 進捗バーのスクラブ
+  function scrub(clientX,clientY){
+    const rect=progress.getBoundingClientRect();
+    const r=Math.max(0,Math.min(1,(clientX-rect.left)/rect.width));
+    state.pos=r*state.max; applyTransform(); updateProgress();
+  }
+  let scrubbing=false;
+  progress.addEventListener("pointerdown",e=>{ scrubbing=true; progress.setPointerCapture(e.pointerId); scrub(e.clientX,e.clientY); });
+  progress.addEventListener("pointermove",e=>{ if(scrubbing) scrub(e.clientX,e.clientY); });
+  progress.addEventListener("pointerup",()=>scrubbing=false);
+
+  // ステージ上のホイールで手動送り（一時停止中の微調整に便利）
+  stage.addEventListener("wheel",e=>{
+    e.preventDefault();
+    state.pos=Math.max(0,Math.min(state.max,state.pos+e.deltaY));
+    applyTransform(); updateProgress();
+  },{passive:false});
+
+  // キーボード
+  window.addEventListener("keydown",e=>{
+    if(drawer.classList.contains("open")) return;
+    if(e.target.tagName==="TEXTAREA") return;
+    switch(e.key){
+      case " ": e.preventDefault(); toggle(); break;
+      case "ArrowLeft": e.preventDefault(); nudge(-3); break;
+      case "ArrowRight": e.preventDefault(); nudge(3); break;
+      case "ArrowUp": e.preventDefault(); setCpm(state.cpm+10); break;
+      case "ArrowDown": e.preventDefault(); setCpm(state.cpm-10); break;
+      case "r": case "R": reset(); break;
+      case "m": case "M": setMirror(!state.mirror); break;
+    }
+  });
+
+  // リサイズ追従
+  let rz; window.addEventListener("resize",()=>{ clearTimeout(rz); rz=setTimeout(()=>{ if(state.ready) measure(); },150); });
+
+  // 初期化
+  setCpm(300); setSize(48); setDir("v");
+})();
+</script>
+</body>
+</html>
